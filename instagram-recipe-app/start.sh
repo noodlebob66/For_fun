@@ -23,6 +23,13 @@ npm run build
 echo "[4/4] Starting server..."
 cd "$ROOT/backend"
 
+if [ -z "$GEMINI_API_KEY" ]; then
+  echo "ERROR: GEMINI_API_KEY is not set."
+  echo "Get a free key at https://aistudio.google.com then run:"
+  echo "  export GEMINI_API_KEY=your_key_here"
+  exit 1
+fi
+
 LAN_IP=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[\d.]+' || hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 echo ""
 echo "  App ready!"
