@@ -1,18 +1,14 @@
-import base64
 import json
 import os
 import requests
 from typing import Optional
 
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY
-)
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
 _PROMPT_TEMPLATE = """You are extracting a recipe from an Instagram cooking reel.
 
-{title_line}{description_block}Extract the COMPLETE recipe and return it as JSON matching this exact structure:
+{title_line}{description_block}Return ONLY a JSON object with this exact structure (no markdown, no explanation):
 {{
   "title": "Name of the dish",
   "description": "Brief appetising description",
@@ -27,12 +23,7 @@ _PROMPT_TEMPLATE = """You are extracting a recipe from an Instagram cooking reel
   ]
 }}
 
-Rules:
-- Extract every ingredient with exact quantities and units
-- List all steps in the correct order as clear, friendly commands
-- If the caption contains a full recipe, extract it precisely
-- If information is only in the image, identify the dish and list visible ingredients
-- Return ONLY the JSON object — no markdown, no extra text"""
+Extract every ingredient with quantities and units. List all steps in order as clear, friendly commands."""
 
 
 def get_reel_info(url: str) -> dict:
@@ -51,18 +42,6 @@ def get_reel_info(url: str) -> dict:
         return {'title': '', 'description': '', 'thumbnail': ''}
 
 
-def fetch_image_b64(image_url: str) -> Optional[str]:
-    try:
-        resp = requests.get(image_url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-        })
-        if resp.status_code == 200:
-            return base64.b64encode(resp.content).decode('utf-8')
-    except Exception as e:
-        print(f"Image fetch error: {e}")
-    return None
-
-
 def extract_recipe(url: str) -> dict:
     info = get_reel_info(url)
     title = info.get('title', '')
@@ -72,35 +51,27 @@ def extract_recipe(url: str) -> dict:
     title_line = f"Video title: {title}\n\n" if title else ""
     description_block = f"Caption/Description:\n{description}\n\n" if description else ""
 
+    if not title and not description:
+        raise ValueError("Could not extract any text from this reel. Instagram may be blocking the request.")
+
     prompt = _PROMPT_TEMPLATE.format(
         title_line=title_line,
         description_block=description_block,
     )
 
-    parts = [{"text": prompt}]
-
-    if thumbnail_url:
-        img_b64 = fetch_image_b64(thumbnail_url)
-        if img_b64:
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": img_b64,
-                }
-            })
-
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "response_mime_type": "application/json"
-        }
-    }
-
-    resp = requests.post(GEMINI_URL, json=payload, timeout=60)
+    resp = requests.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+        },
+        timeout=120,
+    )
     resp.raise_for_status()
 
-    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    recipe_data = json.loads(text)
+    recipe_data = json.loads(resp.json()["response"])
 
     return {
         **recipe_data,
